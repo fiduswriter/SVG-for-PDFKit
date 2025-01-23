@@ -2435,7 +2435,7 @@ var SVGtoPDF = function(doc, svg, x, y, options) {
           currentElem._defRot = currentElem.chooseValue(currentElem._rot[currentElem._rot.length - 1], parentElem && parentElem._defRot, 0);
           if (currentElem.name === 'textPath') {currentElem._y = [];}
           let fontOptions = {fauxItalic: false, fauxBold: false},
-              fontNameorLink = fontCallback(currentElem.get('font-family'), currentElem.get('font-weight') === 'bold', currentElem.get('font-style') === 'italic', fontOptions);
+              fontNameorLink = fontCallback(currentElem.get('font-family'), currentElem.get('font-weight') === 'bold', currentElem.get('font-style') === 'italic', fontOptions, currentElem?.stack);
           try {
             doc.font(fontNameorLink);
           } catch(e) {

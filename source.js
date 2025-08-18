@@ -1631,7 +1631,7 @@ var SVGtoPDF = function(doc, svg, x, y, options) {
       try {
         image = doc.openImage(link);
       } catch(e) {
-        warningCallback('SVGElemImage: failed to open image "' + link + '" in PDFKit');
+        warningCallback('SVGElemImage: failed to open image "' + link + '" in PDFKit', e);
       }
       if (image) {
         if (width === 'auto' && height !== 'auto') {

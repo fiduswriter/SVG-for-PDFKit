@@ -528,12 +528,12 @@ var SVGtoPDF = function(doc, svg, x, y, options) {
         if (temp[1] < 256 && temp[2] < 256 && temp[3] < 256) {
           result = [temp.slice(1, 4), 1];
         }
-      } else if (temp = raw.match(/^hsl\(\s*([0-9]+)(deg)?\s*,\s*([0-9]+)%\s*,\s*([0-9]+)%\s*\)$/i)) {
+      } else if (temp = raw.match(/^hsl\(\s*([0-9.]+)(deg)?\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)%\s*\)$/i)) {
         temp[1] = parseInt(temp[1]); temp[3] = parseInt(temp[3]); temp[4] = parseInt(temp[4]);
         if (temp[1] <= 360 && temp[3] <= 100 && temp[4] <= 100) {
           result = [hslToRgb(temp[1]/360, temp[3]/100, temp[4]/100), 1];
         }
-      } else if (temp = raw.match(/^hsla\(\s*([0-9]+)(deg)?\s*,\s*([0-9]+)%\s*,\s*([0-9]+)%\s*,\s*([0-9.]+)\s*\)$/i)) {
+      } else if (temp = raw.match(/^hsla\(\s*([0-9.]+)(deg)?\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)\s*\)$/i)) {
         temp[1] = parseInt(temp[1]); temp[3] = parseInt(temp[3]); temp[4] = parseInt(temp[4]); temp[5] = parseFloat(temp[5]);
         if (temp[1] <= 360 && temp[3] <= 100 && temp[4] <= 100 && temp[5] <= 1) {
           result = [hslToRgb(temp[1]/360, temp[3]/100, temp[4]/100), temp[5]];

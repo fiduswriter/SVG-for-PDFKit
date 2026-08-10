@@ -519,10 +519,10 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       values: {
         '600': 'bold',
         '700': 'bold',
-        '800': 'bold',
-        '900': 'bold',
+        '800': 'bolder',
+        '900': 'bolder',
         'bold': 'bold',
-        'bolder': 'bold',
+        'bolder': 'bolder',
         '500': 'normal',
         '400': 'normal',
         '300': 'normal',
@@ -605,6 +605,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
     'marker-end': {inherit: true, initial: 'none'},
     'opacity': {inherit: false, initial: 1},
     'transform': {inherit: false, initial: [1, 0, 0, 1, 0, 0]},
+    'transform-origin': {inherit: false, initial: '0 0'},
     'display': {inherit: false, initial: 'inline', values: {'none': 'none', 'inline': 'inline', 'block': 'inline'}},
     'clip-path': {inherit: false, initial: 'none'},
     'mask': {inherit: false, initial: 'none'},
@@ -679,15 +680,31 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
     doc.addContent('/' + group.name + ' Do');
   }
 
-  function docApplyMask(group, clip) {
+  function docApplyMask(group, clip, maskType) {
     let name = 'M' + (doc._maskCount = (doc._maskCount || 0) + 1);
+    let maskSubtype = maskType === 'Alpha' ? 'Alpha' : 'Luminosity';
     let gstate = doc.ref({
       Type: 'ExtGState', CA: 1, ca: 1, BM: 'Normal',
-      SMask: {S: 'Luminosity', G: group.xobj, BC: (clip ? [0, 0, 0] : [1, 1, 1])}
+      SMask: {S: maskSubtype, G: group.xobj, BC: (clip ? [0, 0, 0] : [1, 1, 1])}
     });
     gstate.end();
     doc.page.ext_gstates[name] = gstate;
     doc.addContent('/' + name + ' gs');
+  }
+
+  function applyBlendMode(group, blendMode) {
+    let name = 'M' + (doc._blendModeCount = (doc._blendModeCount || 0) + 1);
+    let gstate = doc.ref({
+      Type: 'ExtGState', CA: 1, ca: 1, BM: blendMode
+    });
+    gstate.end();
+    doc.page.ext_gstates[name] = gstate;
+    doc.addContent('/' + name + ' gs');
+  }
+
+  // Parse an SVG/CSS `mix-blend-mode` value into the PDF blend mode name.
+  function parseCSSBlendMode(blendMode) {
+    return blendMode.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
   }
 
   function docCreatePattern(group, dx, dy, matrix) {
@@ -802,6 +819,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
   }
 
   function docFillColor(color) {
+    color = typeof color === 'string' ? [color, 1] : color;
     if (isString(color[0])) {
       doc.fillColor(color[0]);
     } else if (color[0].type === 'PDFPattern') {
@@ -813,6 +831,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
   }
 
   function docStrokeColor(color) {
+    color = typeof color === 'string' ? [color, 1] : color;
     if (isString(color[0])) {
       doc.strokeColor(color[0]);
     } else if (color[0].type === 'PDFPattern') {
@@ -1051,6 +1070,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
         return new SvgNode(null, 8, temp, error);
       } else if (temp = parser.match(/^<\?[\s\S]*?\?>/)) { // Processing instructions
         return new SvgNode(null, 7, temp, error);
+      } else if (temp = parser.match(/^<!DOCTYPE[^<[]+?\[[\s\S]*?\]>/)) { // Nested DOCTYPE with internal subset
+        return new SvgNode(null, 10, temp, error);
       } else if (temp = parser.match(/^<!DOCTYPE\s*([\s\S]*?)>/)) { // Doctype
         return new SvgNode(null, 10, temp, error);
       } else if (temp = parser.match(/^<!\[CDATA\[([\s\S]*?)\]\]>/, true)) { // Cdata node
@@ -1084,6 +1105,29 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
         return mt;
       }
     }));
+  }
+
+  function hslToRgb(h, s, l) {
+    let r, g, b;
+    if (s === 0) {
+      r = g = b = l;
+    } else {
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hueToRgb(p, q, h + 1 / 3);
+      g = hueToRgb(p, q, h);
+      b = hueToRgb(p, q, h - 1 / 3);
+    }
+    return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+  }
+
+  function hueToRgb(p, q, t) {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
   }
 
   function parseColor(raw) {
@@ -1120,6 +1164,21 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       temp[3] = 2.55 * parseFloat(temp[3]);
       if (temp[1] < 256 && temp[2] < 256 && temp[3] < 256) {
         result = [temp.slice(1, 4), 1];
+      }
+    } else if (temp = raw.match(/^hsla\(\s*([0-9.]+)(deg)?\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)\s*\)$/i)) {
+      temp[1] = parseFloat(temp[1]);
+      temp[3] = parseFloat(temp[3]);
+      temp[4] = parseFloat(temp[4]);
+      temp[5] = parseFloat(temp[5]);
+      if (temp[1] <= 360 && temp[3] <= 100 && temp[4] <= 100 && temp[5] <= 1) {
+        result = [hslToRgb(temp[1] / 360, temp[3] / 100, temp[4] / 100), temp[5]];
+      }
+    } else if (temp = raw.match(/^hsl\(\s*([0-9.]+)(deg)?\s*,\s*([0-9.]+)%\s*,\s*([0-9.]+)%\s*\)$/i)) {
+      temp[1] = parseFloat(temp[1]);
+      temp[3] = parseFloat(temp[3]);
+      temp[4] = parseFloat(temp[4]);
+      if (temp[1] <= 360 && temp[3] <= 100 && temp[4] <= 100) {
+        result = [hslToRgb(temp[1] / 360, temp[3] / 100, temp[4] / 100), 1];
       }
     } else if (temp = raw.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)) {
       result = [[parseInt(temp[1], 16), parseInt(temp[2], 16), parseInt(temp[3], 16)], 1];
@@ -1165,6 +1224,23 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
 
   function transformPoint(p, m) {
     return [m[0] * p[0] + m[2] * p[1] + m[4], m[1] * p[0] + m[3] * p[1] + m[5]];
+  }
+
+  // Wraps an element's transformation matrix around its `transform-origin`
+  // (translate(origin) * matrix * translate(-origin)).
+  function applyTransformOrigin(elem, matrix) {
+    let originFn = elem.get('transform-origin');
+    if (typeof originFn !== 'function') {
+      return matrix;
+    }
+    let o = originFn(
+      typeof elem.getVWidth === 'function' ? elem.getVWidth() : 0,
+      typeof elem.getVHeight === 'function' ? elem.getVHeight() : 0
+    );
+    if (!o[0] && !o[1]) {
+      return matrix;
+    }
+    return multiplyMatrix([1, 0, 0, 1, o[0], o[1]], matrix, [1, 0, 0, 1, -o[0], -o[1]]);
   }
 
   function getGlobalMatrix() {
@@ -1244,7 +1320,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
   function parseTranform(v) {
     let parser = new StringParser((v || '').trim()), result = [1, 0, 0, 1, 0, 0], temp;
     while (temp = parser.match(/^([A-Za-z]+)\s*[(]([^(]+)[)]/, true)) {
-      let func = temp[1], nums = [], parser2 = new StringParser(temp[2].trim()), temp2;
+      let func = temp[1], nums = [], parser2 = new StringParser(temp[2].trim().replace(/px/g, '')), temp2;
       while (temp2 = parser2.matchNumber()) {
         nums.push(Number(temp2));
         parser2.matchSeparator();
@@ -1252,6 +1328,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       if (func === 'matrix' && nums.length === 6) {
         result = multiplyMatrix(result, [nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]]);
       } else if (func === 'translate' && nums.length === 2) {
+        result = multiplyMatrix(result, [1, 0, 0, 1, nums[0], nums[1]]);
+      } else if (func === 'translate3d' && nums.length === 3) { // only when the Z component is 0, it's a 2D translate
         result = multiplyMatrix(result, [1, 0, 0, 1, nums[0], nums[1]]);
       } else if (func === 'translate' && nums.length === 1) {
         result = multiplyMatrix(result, [1, 0, 0, 1, nums[0], 0]);
@@ -1280,6 +1358,61 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       return;
     }
     return result;
+  }
+
+  // Parses a `transform-origin` value. Returns a function of (width, height)
+  // producing the [x, y] origin in user units, or null if it can't parse.
+  function parseTranformOrigin(v) {
+    let temp, parts;
+    // parse a single token (px/absolute/percentage) against a base length
+    function parseValue(token, base) {
+      token = (token || '').trim().toLowerCase();
+      let pct = token.match(/^([+-]?[0-9]*\.?[0-9]+)%$/);
+      if (pct) {
+        return base * (parseFloat(pct[1]) / 100);
+      }
+      let num = parseFloat(token.replace(/px$/, ''));
+      return isNaN(num) ? 0 : num;
+    }
+    // Map a keyword to an offset function of the reference length.
+    function keywordX(k) {
+      return k === 'left' ? function (w) { return 0; } :
+        k === 'right' ? function (w) { return w; } :
+        k === 'center' ? function (w) { return w / 2; } : null;
+    }
+    function keywordY(k) {
+      return k === 'top' ? function (h) { return 0; } :
+        k === 'bottom' ? function (h) { return h; } :
+        k === 'center' ? function (h) { return h / 2; } : null;
+    }
+    // Two or three explicit values (z is dropped for static 2D SVG)
+    if (temp = (v || '').trim().match(/^([+-]?(?:[0-9]*\.)?[0-9]+(?:%|px)?)\s+([+-]?(?:[0-9]*\.)?[0-9]+(?:%|px)?)(?:\s+([+-]?(?:[0-9]*\.)?[0-9]+(?:%|px)?))?$/)) {
+      let vx = temp[1], vy = temp[2];
+      return function (width, height) {
+        return [parseValue(vx, width), parseValue(vy, height)];
+      };
+    }
+    // Keyword-based form(s)
+    parts = (v || '').trim().toLowerCase().split(/\s+/).slice(0, 2);
+    let kx = null, ky = null, kv = [];
+    for (let i = 0; i < parts.length; i++) {
+      let f = keywordX(parts[i]);
+      if (f !== null) { kx = f; continue; }
+      f = keywordY(parts[i]);
+      if (f !== null) { ky = f; continue; }
+      kv.push(parts[i]);
+    }
+    if (kx !== null || ky !== null || kv.length) {
+      return function (width, height) {
+        let x = kx ? kx(width) : (kv[0] !== undefined ? parseValue(kv[0], width) : width / 2);
+        let y = ky ? ky(height) : (kv[1] !== undefined ? parseValue(kv[1], height) : (kv[0] !== undefined && !ky ? 0 : height / 2));
+        return [x, y];
+      };
+    }
+    // Fallback: default origin
+    return function () {
+      return [0, 0];
+    };
   }
 
   function parseAspectRatio(aspectRatio, availWidth, availHeight, elemWidth, elemHeight, initAlign) {
@@ -1429,7 +1562,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       }
     }
     for (let i = 0; i < selector.classes.length; i++) {
-      if (!elem.classList.contains(selector.classes[i])) {
+      const contains = typeof elem.classList.contains === 'function' ? 'contains' : 'includes';
+      if (!elem.classList[contains](selector.classes[i])) {
         return false;
       }
     }
@@ -2161,12 +2295,12 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       for (let i = 0; i < 3; i++) {
         switch (i) {
           case 0:
+            value = this.style[key];
+            break;
+          case 1:
             if (key !== 'transform') { // the CSS transform behaves strangely
               value = this.css[keyInfo.css || key];
             }
-            break;
-          case 1:
-            value = this.style[key];
             break;
           case 2:
             value = this.attr(key);
@@ -2207,6 +2341,9 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
               break;
             case 'transform':
               result = parseTranform(value);
+              break;
+            case 'transform-origin':
+              result = parseTranformOrigin(value);
               break;
             case 'stroke-dasharray':
               if (value === 'none') {
@@ -2422,20 +2559,36 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
 
   var SvgElemContainer = function (obj, inherits) {
     SvgElemHasChildren.call(this, obj, inherits);
-    this.drawContent = function (isClip, isMask) {
+    this.drawContent = function (isClip, isMask, blendMode) {
       this.transform();
       let clipped = this.clip(),
         masked = this.mask(),
         group;
-      if ((this.get('opacity') < 1 || clipped || masked) && !isClip) {
+      if ((this.get('opacity') < 1 || clipped || masked || blendMode) && !isClip) {
         group = docBeginGroup(getPageBBox());
       }
       this.drawChildren(isClip, isMask);
       if (group) {
         docEndGroup(group);
+        if (blendMode) {
+          applyBlendMode(group, blendMode);
+        }
         doc.fillOpacity(this.get('opacity'));
         docInsertGroup(group);
       }
+    };
+
+    this.drawInDocument = function (isClip, isMask) {
+      doc.save();
+      let blendMode;
+      if (this.style && this.style['mix-blend-mode']) {
+        blendMode = parseCSSBlendMode(this.style['mix-blend-mode'].trim());
+      }
+      this.drawContent(isClip, isMask, blendMode);
+      doc.restore();
+    };
+    this.getTransformation = function () {
+      return this.get('transform');
     };
   };
 
@@ -2493,11 +2646,15 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       if (this.link && !isClip && !isMask) {
         this.addLink();
       }
-      this.drawContent(isClip, isMask);
+      let blendMode;
+      if (this.style && this.style['mix-blend-mode']) {
+        blendMode = parseCSSBlendMode(this.style['mix-blend-mode'].trim());
+      }
+      this.drawContent(isClip, isMask, blendMode);
       doc.restore();
     };
     this.getTransformation = function () {
-      return this.get('transform');
+      return applyTransformOrigin(this, this.get('transform'));
     };
   };
 
@@ -2573,7 +2730,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
     try {
       image = doc.openImage(link);
     } catch (e) {
-      warningCallback('SVGElemImage: failed to open image "' + link + '" in PDFKit');
+      warningCallback('SVGElemImage: failed to open image "' + link + '" in PDFKit', e);
     }
     if (image) {
       if (width === 'auto' && height !== 'auto') {
@@ -2839,7 +2996,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       return this.shape;
     };
     this.getTransformation = function () {
-      return this.get('transform');
+      return applyTransformOrigin(this, this.get('transform'));
     };
     this.drawInDocument = function (isClip, isMask) {
       if (this.get('visibility') === 'hidden' || !this.shape) {
@@ -2925,7 +3082,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
           let markersPos = this.shape.getMarkers();
           if (markerStart !== 'none' && markersPos.length > 0) {
             let marker = new SvgElemMarker(markerStart, null);
-            marker.drawMarker(false, isMask, markersPos[0], lineWidth);
+            marker.drawMarker(false, isMask, markersPos[0], lineWidth, true);
           }
           if (markerMid !== 'none') {
             for (let i = 1; i < markersPos.length - 1; i++) {
@@ -3073,12 +3230,15 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
     this.getVHeight = function () {
       return viewBox[3];
     };
-    this.drawMarker = function (isClip, isMask, posArray, strokeWidth) {
+    this.drawMarker = function (isClip, isMask, posArray, strokeWidth, isStart) {
       doc.save();
       let orient = this.attr('orient'),
         units = this.attr('markerUnits'),
-        rotate = (orient === 'auto' ? posArray[2] : (parseFloat(orient) || 0) * Math.PI / 180),
+        rotate = (orient === 'auto' || orient === 'auto-start-reverse' ? posArray[2] : (parseFloat(orient) || 0) * Math.PI / 180),
         scale = (units === 'userSpaceOnUse' ? 1 : strokeWidth);
+      if (orient === 'auto-start-reverse' && isStart) {
+        rotate += Math.PI;
+      }
       doc.transform(Math.cos(rotate) * scale, Math.sin(rotate) * scale, -Math.sin(rotate) * scale, Math.cos(rotate) * scale, posArray[0], posArray[1]);
       let refX = this.getLength('refX', this.getVWidth(), 0),
         refY = this.getLength('refY', this.getVHeight(), 0),
@@ -3143,7 +3303,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       this.drawChildren(false, true);
       doc.restore();
       docEndGroup(group);
-      docApplyMask(group, true);
+      let maskType = (this.style && this.style['mask-type']) || (obj.getAttribute && obj.getAttribute('mask-type'));
+      docApplyMask(group, true, maskType);
     };
   };
 
@@ -3241,7 +3402,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
         docApplyDash(this.get('stroke-dasharray'), this.get('stroke-dashoffset'));
       }
       for (let j = 0, pos = this._pos; j < pos.length; j++) {
-        if (!pos[j].hidden && isNotEqual(pos[j].width, 0)) {
+        if (!pos[j].hidden) {
           let dx0 = (linePosition + lineWidth / 2) * Math.sin(pos[j].rotate),
             dy0 = -(linePosition + lineWidth / 2) * Math.cos(pos[j].rotate),
             dx1 = (linePosition - lineWidth / 2) * Math.sin(pos[j].rotate),
@@ -3353,7 +3514,12 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
           currentElem._y = [];
         }
         let fontOptions = {fauxItalic: false, fauxBold: false},
-          fontNameorLink = fontCallback(currentElem.get('font-family'), currentElem.get('font-weight') === 'bold', currentElem.get('font-style') === 'italic', fontOptions);
+          fontResult = fontCallback(currentElem.get('font-family'), currentElem.get('font-weight'), currentElem.get('font-style') === 'italic', fontOptions, currentElem.stack),
+          fontNameorLink = typeof fontResult === 'object' && fontResult !== null ? fontResult.fontNameorLink : fontResult;
+        if (typeof fontResult === 'object' && fontResult !== null) {
+          fontOptions.fauxBold = fontResult.fauxBold;
+          fontOptions.fauxItalic = fontResult.fauxItalic;
+        }
         try {
           doc.font(fontNameorLink);
         } catch (e) {
@@ -3550,7 +3716,7 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
       }
     })(this);
     this.getTransformation = function () {
-      return this.get('transform');
+      return applyTransformOrigin(this, this.get('transform'));
     };
     this.drawInDocument = function (isClip, isMask) {
       doc.save();
@@ -3570,7 +3736,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
   };
 
   options = options || {};
-  var pxToPt = options.assumePt ? 1 : (72 / 96), // 1px = 72/96pt, but only if assumePt is false
+  var pointsPerInch = options.pointsPerInch || 72,
+    pxToPt = options.assumePt ? 72 / pointsPerInch : (pointsPerInch / 96), // 1px = pointsPerInch/96pt, but only if assumePt is false
     viewportWidth = (options.width || doc.page.width) / pxToPt,
     viewportHeight = (options.height || doc.page.height) / pxToPt,
     preserveAspectRatio = options.preserveAspectRatio || null, // default to null so that the attr can override if not passed
@@ -3594,7 +3761,8 @@ var SVGtoPDF = function (doc, svg, x, y, options) {
     };
   }
   if (typeof fontCallback !== 'function') {
-    fontCallback = function (family, bold, italic, fontOptions) {
+    fontCallback = function (family, weight, italic, fontOptions) {
+      let bold = weight === 'bold' || weight === 'bolder';
       // Check if the font is already registered in the document
       if (bold && italic) {
         if (doc._registeredFonts.hasOwnProperty(family + '-BoldItalic')) {

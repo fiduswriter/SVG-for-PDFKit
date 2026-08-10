@@ -16,7 +16,7 @@ declare function SVGtoPDF(
     options: SVGtoPDF.Options,
 ): void
 declare namespace SVGtoPDF {
-    export type Color = [[number, number, number], number]
+    export type Color = [[number, number, number], number] | [string, number] | [string]
     export interface Options {
         // initial viewport width, by default it's the page width
         width?: number
@@ -30,13 +30,16 @@ declare namespace SVGtoPDF {
         // use the CSS styles computed by the browser (for SVGElement only)
         useCSS?: boolean
 
-        // function called to get the fonts, see source code
+        // function called to get the fonts, see source code.
+        // Returns the font name/link (string) or an object with the resolved
+        // font plus faux style flags.
         fontCallback?: (
             family: string,
-            bold: boolean,
+            weight: string,
             italic: boolean,
             fontOptions: { fauxItalic: boolean; fauxBold: boolean },
-        ) => string
+            elementStack?: SVGElement[],
+        ) => string | { fontNameorLink: string; fauxBold: boolean; fauxItalic: boolean } | Buffer
 
         // same as above for the images (for Node.js)
         imageCallback?: (link: string) => string
@@ -50,10 +53,13 @@ declare namespace SVGtoPDF {
         colorCallback?: (color: Color) => Color
 
         // function called when there is a warning
-        warningCallback?: (warning: string) => void
+        warningCallback?: (warning: string, error?: Error) => void
 
         // assume that units are PDF points instead of SVG pixels
         assumePt?: boolean
+
+        // points per inch used in the px→pt conversion (default = 72)
+        pointsPerInch?: number
 
         // precision factor for approximate calculations (default = 3)
         precision?: number
